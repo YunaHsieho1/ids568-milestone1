@@ -19,3 +19,8 @@ model.pkl
 # Env
 .env
 .env.local
+
+# gcloud CLI (local install, do not commit)
+google-cloud-sdk/
+google-cloud-cli-darwin-arm.tar.gz
+*.tar.gz
