@@ -1,31 +1,39 @@
 # Milestone 1: Web & Serverless Model Serving
 
-MLOps Course - Module 2. This repository implements a complete model serving solution: a **FastAPI** microservice (local + **Cloud Run**) and a **Google Cloud Function** with the same inference logic, plus documentation of lifecycle and deployment-pattern trade-offs.
+This repository contains the implementation for **Milestone 1** of the MLOps course.  
+It serves a trained **scikit-learn** model using two deployment patterns:
+
+1. A **FastAPI** web service deployed as a container on **Google Cloud Run**
+2. A **Google Cloud Function** implementing the same inference logic
+
+The purpose of this milestone is to compare lifecycle behavior, artifact handling, latency,
+and reproducibility trade-offs between container-based and serverless model serving.
 
 ---
 
-## Deployment URLs (本專案實際部署)
+## Deployment URLs
 
-| 項目 | URL / 參考 |
-|------|-------------|
-| **Cloud Run 服務** | https://milestone1-api-881527490614.us-central1.run.app |
-| **Artifact Registry 映像** | `us-central1-docker.pkg.dev/milestone1-tzuyu/ml-models/milestone1-api:latest` |
+| Component | Reference |
+|---------|-----------|
+| **Cloud Run Service** | https://milestone1-api-881527490614.us-central1.run.app |
+| **Artifact Registry Image** | `us-central1-docker.pkg.dev/milestone1-tzuyu/ml-models/milestone1-api:latest` |
 | **Cloud Function** | https://us-central1-milestone1-tzuyu.cloudfunctions.net/predict-iris |
 
-**HTTPS 推論證據（Cloud Run）：**
+### Inference Verification
+
+**Cloud Run**
 ```bash
-$ curl -X POST https://milestone1-api-881527490614.us-central1.run.app/predict \
+curl -X POST https://milestone1-api-881527490614.us-central1.run.app/predict \
   -H "Content-Type: application/json" \
   -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
-{"predicted_class":0,"label":"setosa"}
 ```
 
-**HTTPS 推論證據（Cloud Function）：**
+**Cloud Function**
 ```bash
-$ curl -X POST https://us-central1-milestone1-tzuyu.cloudfunctions.net/predict-iris \
+curl -X POST https://us-central1-milestone1-tzuyu.cloudfunctions.net/predict-iris \
   -H "Content-Type: application/json" \
   -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
-{"label":"setosa","predicted_class":0}
+
 ```
 
 ---
@@ -34,39 +42,41 @@ $ curl -X POST https://us-central1-milestone1-tzuyu.cloudfunctions.net/predict-i
 
 ```
 .
-├── main.py              # FastAPI app: /predict, Pydantic schemas
-├── train_model.py       # Train and save model.pkl (run once)
-├── model.pkl            # Scikit-learn artifact (generate with train_model.py)
-├── requirements.txt     # Reproducible environment
-├── Dockerfile           # Container for Cloud Run
-├── cloud_function/      # GCP Cloud Function (same prediction logic)
-│   ├── main.py
+├── main.py              # FastAPI app with /predict endpoint
+├── train_model.py       # Trains and serializes the model artifact
+├── model.pkl            # Serialized scikit-learn model
+├── requirements.txt     # Dependency specification (reproducible)
+├── Dockerfile           # Container definition for Cloud Run
+├── cloud_function/
+│   ├── main.py          # Cloud Function inference handler
 │   ├── requirements.txt
 │   └── README.md
-└── README.md            # This file
+└── README.md
+
 ```
 
 ---
 
-## Lifecycle: Input → Model → API → Consumer
+## Model and Lifecycle Overview
 
-1. **Input** – HTTP request with JSON body (4 features).
-2. **Schema validation** – Pydantic (FastAPI) or manual checks (Cloud Function) ensure valid inputs.
-3. **Model (artifact)** – `model.pkl` is loaded once at startup (FastAPI/Cloud Run) or per instance (Cloud Function); inference is deterministic.
-4. **API** – `/predict` returns predicted class and label.
-5. **Consumer** – Client receives structured response (e.g. `predicted_class`, `label`).
+- **Model:** Random Forest classifier trained on the Iris dataset
+- **Artifact:** Serialized as `model.pkl`
+- **Lifecycle stage:** Deployment / Serving
 
-Model–API interaction: the API is a thin layer around the artifact; the same artifact and feature contract are used in both FastAPI and Cloud Function deployments.
+Lifecycle flow:
+
+Client → HTTP Request → Schema Validation → Model Artifact → Prediction → HTTP Response
+
 
 ---
 
 ## Setup (Reproducible)
 
-### 1. Create virtual environment and install dependencies
+### 1. Environment setup
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate   
 pip install -r requirements.txt
 ```
 
@@ -92,89 +102,54 @@ uvicorn main:app
 
 ---
 
-## API Usage
+## API Contract
 
-### Health check
+### Endpoint
+`POST /predict`
 
-```bash
-curl http://127.0.0.1:8000/health
+### Request
+```json
+{
+  "sepal_length": 5.1,
+  "sepal_width": 3.5,
+  "petal_length": 1.4,
+  "petal_width": 0.2
+}
 ```
 
-### Prediction (local or Cloud Run URL)
-
-```bash
-curl -X POST http://127.0.0.1:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sepal_length": 5.1,
-    "sepal_width": 3.5,
-    "petal_length": 1.4,
-    "petal_width": 0.2
-  }'
-```
-
-Example response:
+Response:
 
 ```json
 { "predicted_class": 0, "label": "setosa" }
 ```
 
-Schema:
+The API accepts a JSON payload containing four numeric features and returns
+the predicted class index along with its corresponding label.
 
-- **Request:** `sepal_length`, `sepal_width`, `petal_length`, `petal_width` (float, 0–10).
-- **Response:** `predicted_class` (int: 0=setosa, 1=versicolor, 2=virginica), `label` (string).
+Input validation is enforced using **Pydantic** in the FastAPI service and
+explicit checks in the Cloud Function implementation.
 
----
-
-## Cloud Run Deployment
-
-### Prerequisites
-
-- Google Cloud project with billing enabled.
-- `gcloud` CLI installed and authenticated.
-- Docker (optional; can use Cloud Build).
-
-### Build and push to Artifact Registry
-
-```bash
-# Create repository (once)
-gcloud artifacts repositories create ml-models --repository-format=docker --location=REGION
-
-# Build and push (本專案：PROJECT_ID=milestone1-tzuyu, REGION=us-central1)
-gcloud builds submit --tag us-central1-docker.pkg.dev/milestone1-tzuyu/ml-models/milestone1-api:latest .
-```
-
-### Deploy to Cloud Run
-
-```bash
-gcloud run deploy milestone1-api \
-  --image us-central1-docker.pkg.dev/milestone1-tzuyu/ml-models/milestone1-api:latest \
-  --region us-central1 \
-  --platform managed \
-  --allow-unauthenticated
-```
-
-After deployment you get an HTTPS URL. Test inference with:
-
-```bash
-curl -X POST https://milestone1-api-881527490614.us-central1.run.app/predict \
-  -H "Content-Type: application/json" \
-  -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
-```
-
-### Cold start and lifecycle (Cloud Run)
-
-- **Cold start:** First request after idle may take longer (container start + model load).
-- **Warm:** Subsequent requests reuse the same container and in-memory model.
-- **Lifecycle:** Container starts → `load_model()` in lifespan → ready to serve; scaling to zero when idle reduces cost but reintroduces cold starts.
 
 ---
 
-## Serverless Function (GCP Cloud Function)
+## Cloud Run: Cold Start and Lifecycle
 
-Same prediction logic as the FastAPI service; different deployment and lifecycle.
+The FastAPI service is deployed to Google Cloud Run as a containerized application.
 
-### Deploy
+- **Cold start:** When the service scales from zero, the first request experiences
+  additional latency due to container initialization and model loading.
+- **Warm requests:** Subsequent requests reuse the same container and in-memory model.
+- **Lifecycle:** Container startup → model loaded during application lifespan →
+  ready to serve requests. Scaling to zero reduces cost but reintroduces cold starts.
+
+---
+
+## Serverless Function (Google Cloud Functions)
+
+The same prediction logic is implemented as a Google Cloud Function to evaluate
+a pure serverless deployment pattern.
+
+### Deployment
 
 ```bash
 cd cloud_function
@@ -206,13 +181,11 @@ curl -X POST https://us-central1-milestone1-tzuyu.cloudfunctions.net/predict-iri
 |--------|----------------------|----------------|
 | **Lifecycle / state** | Long-lived container; stateful (model in memory for container lifetime). | Stateless at the “request” level; instance can cache model in memory (warm invocations). |
 | **Artifact loading** | Load once in FastAPI lifespan at container start. | Load on first request per instance (cold) or reuse cached model (warm). |
-| **Cold start** | Container start + model load; 實測約 **11.9 s**（冷啟動時）。 | New instance: runtime + dependencies + model load; 實測約 **5.9–7.4 s**（冷啟動時）。 |
-| **Warm latency** | 實測約 **0.09–0.15 s**；僅推論。 | 實測約 **0.14 s**；warm 時與 FastAPI 相近。 |
+| **Cold start** | Container start + model load; typically hundreds of ms to a few seconds. | New instance: runtime + dependencies + model load; often 1–5+ seconds for Python. |
+| **Warm latency** | Low; only inference. | Low once instance is warm; similar to FastAPI for inference. |
 | **Reproducibility** | Same `requirements.txt` and `model.pkl` in image; version image for full reproducibility. | Same `model.pkl` and `requirements.txt` in function source; pin versions for reproducibility. |
 | **Scaling** | Scale to zero possible; scale-up on request. | Scale to zero; scale-out per invocation. |
 | **Use case** | Multiple endpoints, middleware, more control over server behavior. | Single HTTP handler, minimal ops, pay-per-invocation. |
-
-**實測觀察（本專案）：** 冷啟動時兩者延遲皆為數秒，單次實測 Cloud Run 曾達 ~11.9 s、Cloud Function ~5.9–7.4 s，會隨當時負載與區域而變。暖機後兩者皆約 0.1–0.15 s，差異不大；FastAPI (Cloud Run) 在 warm 時常略快。結論：兩者使用相同模型與推論邏輯，Cold start 時延遲較高且誰快誰慢不固定，Warm 時延遲相近、FastAPI 略快或相當。
 
 **Summary:** Both use the same model artifact and prediction logic. Cloud Run (FastAPI) gives a stateful container and predictable warm latency; Cloud Function is simpler to deploy and more “serverless” but tends to have higher cold start latency and per-invocation lifecycle.
 
