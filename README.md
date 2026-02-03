@@ -175,43 +175,56 @@ curl -X POST https://us-central1-milestone1-tzuyu.cloudfunctions.net/predict-iri
 
 ---
 
-## Comparative Analysis: FastAPI (Cloud Run) vs Cloud Function
+## Comparative Analysis: Cloud Run (FastAPI) vs Cloud Function
 
-| Aspect | FastAPI on Cloud Run | Cloud Function |
-|--------|----------------------|----------------|
-| **Lifecycle / state** | Long-lived container; stateful (model in memory for container lifetime). | Stateless at the “request” level; instance can cache model in memory (warm invocations). |
-| **Artifact loading** | Load once in FastAPI lifespan at container start. | Load on first request per instance (cold) or reuse cached model (warm). |
-| **Cold start** | Container start + model load; typically hundreds of ms to a few seconds. | New instance: runtime + dependencies + model load; often 1–5+ seconds for Python. |
-| **Warm latency** | Low; only inference. | Low once instance is warm; similar to FastAPI for inference. |
-| **Reproducibility** | Same `requirements.txt` and `model.pkl` in image; version image for full reproducibility. | Same `model.pkl` and `requirements.txt` in function source; pin versions for reproducibility. |
-| **Scaling** | Scale to zero possible; scale-up on request. | Scale to zero; scale-out per invocation. |
-| **Use case** | Multiple endpoints, middleware, more control over server behavior. | Single HTTP handler, minimal ops, pay-per-invocation. |
+| Aspect | Cloud Run (FastAPI) | Cloud Function |
+|------|---------------------|----------------|
+| **Execution model** | Long-lived container | Event-driven function |
+| **State handling** | Stateful per container (model kept in memory for container lifetime) | Stateless per invocation; instance may cache model during warm invocations |
+| **Artifact loading** | Loaded once at container startup via FastAPI lifespan | Loaded on cold start per instance; reused on warm invocations |
+| **Cold start latency (observed)** | ~11.9 s | ~5.9–7.4 s |
+| **Warm latency (observed)** | ~0.09–0.15 s | ~0.14 s |
+| **Reproducibility** | High (Docker image with pinned dependencies and model artifact) | Moderate (function source with pinned dependencies and model artifact) |
+| **Scaling behavior** | Scales to zero; scales by container | Scales to zero; scales per request |
+| **Typical use case** | Multi-endpoint services with middleware and greater runtime control | Lightweight, single-purpose inference endpoints |
 
-**Summary:** Both use the same model artifact and prediction logic. Cloud Run (FastAPI) gives a stateful container and predictable warm latency; Cloud Function is simpler to deploy and more “serverless” but tends to have higher cold start latency and per-invocation lifecycle.
+**Observed behavior:**  
+Both deployments use the same model artifact and inference logic. Cold start latency
+varies depending on platform state, region, and runtime conditions. In observed tests,
+Cloud Run exhibited a longer cold start (~11.9 s), while Cloud Function cold starts
+ranged from ~5.9 to 7.4 s. After warm-up, latency was comparable across both patterns
+(~0.1–0.15 s), with Cloud Run often slightly faster due to container reuse and
+in-memory model persistence.
+
+**Summary:**  
+Cloud Run (FastAPI) provides a stateful container environment with predictable warm
+latency and greater control over the serving runtime. Cloud Functions offer a simpler,
+more serverless deployment model with lower operational overhead, but typically incur
+higher cold start costs and a per-invocation lifecycle.
 
 ---
 
 ## Evidence Checklist
 
-- [x] **FastAPI (local):** `uvicorn main:app` and successful `curl` to `/predict`.
-- [x] **Cloud Run:** Deployed service URL (HTTPS), Artifact Registry image reference, and a `curl` showing successful inference（見上方 Deployment URLs）。
-- [x] **Cloud Function:** Deployed function URL and a `curl` showing successful invocation（見上方 Deployment URLs）。
-- [x] **Comparative report:** 上表已填入實測 cold/warm 延遲，並於 Comparative Analysis 加入實測觀察說明。
+- [x] **FastAPI (local):** `uvicorn main:app` runs successfully and `/predict` returns valid predictions.
+- [x] **Cloud Run:** Service deployed with public HTTPS URL, Artifact Registry image reference, and verified inference via `curl`.
+- [x] **Cloud Function:** Function deployed with public URL and verified inference via `curl`.
+- [x] **Comparative analysis:** Cold and warm start latency measured and documented in the table above with observed results.
 
 ---
 
 ## Requirements & Constraints Met
 
-- **Language:** Python only.
-- **Framework:** FastAPI for the web service.
-- **Cloud:** Google Cloud (Cloud Run and Cloud Functions).
-- **Model:** Scikit-learn (Random Forest on Iris), saved as `model.pkl`.
+- **Language:** Python
+- **Framework:** FastAPI
+- **Cloud:** Google Cloud (Cloud Run and Cloud Functions)
+- **Model:** Scikit-learn (Random Forest on Iris dataset), saved as `model.pkl`
 - **Registry:** GCP Artifact Registry for Cloud Run image.
 
 ---
 
-## Tips
+## Notes
 
-- **Model path:** Set `MODEL_PATH` if `model.pkl` is not in the current directory (e.g. in Docker or Cloud Run).
-- **Credentials:** Use environment variables and GCP IAM; do not hardcode keys.
-- **Reproducibility:** Keep `requirements.txt` (and Cloud Function’s) pinned; document the exact image/function version used for submission.
+- **Model path:** Set `MODEL_PATH` if `model.pkl` is not in the working directory (e.g., in Docker or Cloud Run).
+- **Credentials:** Use environment variables and GCP IAM; do not hardcode secrets.
+- **Reproducibility:** Keep `requirements.txt` (and Cloud Function dependencies) pinned and document the exact image or function version used for submission.
