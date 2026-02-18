@@ -1,0 +1,85 @@
+# Milestone 2: Build, test, and push to Google Artifact Registry
+name: Build and Push ML Service
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+env:
+  GCP_PROJECT: milestone1-tzuyu
+  GAR_REGION: us-central1
+  GAR_REPOSITORY: docker
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install app dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r module3/milestone2/app/requirements.txt
+          pip install -r module3/milestone2/requirements-dev.txt
+
+      - name: Run tests
+        run: |
+          cd module3/milestone2
+          pytest tests/ -v
+
+  build:
+    name: Build and Push
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gcloud auth configure-docker ${{ env.GAR_REGION }}-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract version for tag
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=sha-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./module3/milestone2
+          file: ./module3/milestone2/Dockerfile
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: |
+            ${{ env.GAR_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.GAR_REPOSITORY }}/ml-service:${{ steps.version.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha

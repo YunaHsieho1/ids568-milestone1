@@ -1,0 +1,14 @@
+# Avoid copying unnecessary files into build context
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.coverage
+htmlcov
+*.md
+tests
+docker-compose.yaml
+.env
+*.log
