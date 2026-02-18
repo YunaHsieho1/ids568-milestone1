@@ -38,6 +38,7 @@ jobs:
       - name: Run tests
         run: |
           cd module3/milestone2
+          export MODEL_PATH="$GITHUB_WORKSPACE/module3/milestone2/app/model.pkl"
           pytest tests/ -v
 
   build:
